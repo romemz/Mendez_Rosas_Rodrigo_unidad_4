@@ -44,12 +44,45 @@ function formatError(error) {
 	return error?.message || 'Ocurrio un error inesperado.';
 }
 
+function isGithubPagesHost() {
+	return typeof window !== 'undefined' && window.location.hostname.endsWith('github.io');
+}
+
 async function fetchApi(url, options = {}) {
 	const response = await fetch(url, options);
-	const data = await response.json();
-	if (!response.ok) {
-		throw new Error(data.error || 'Error en la peticion.');
+	const contentType = (response.headers.get('content-type') || '').toLowerCase();
+	const raw = await response.text();
+	let data = null;
+
+	if (raw) {
+		const pareceJson = contentType.includes('application/json') || /^[\s\r\n]*[\[{]/.test(raw);
+		if (pareceJson) {
+			try {
+				data = JSON.parse(raw);
+			} catch (_error) {
+				data = null;
+			}
+		}
 	}
+
+	const isApiRoute = typeof url === 'string' && url.startsWith('/api/');
+	if (!response.ok) {
+		if (data?.error) {
+			throw new Error(data.error);
+		}
+		if (isApiRoute) {
+			throw new Error('Esta seccion requiere backend Node/Express activo; en GitHub Pages las rutas /api no existen.');
+		}
+		throw new Error(`Error en la peticion (${response.status}).`);
+	}
+
+	if (!data) {
+		if (isApiRoute) {
+			throw new Error('No se recibio JSON de la API. Verifica que el backend este encendido.');
+		}
+		throw new Error('La respuesta del servidor no es JSON valido.');
+	}
+
 	return data;
 }
 
@@ -504,10 +537,35 @@ function ytRenderVideos(videos, label) {
 	});
 }
 
+function ytRenderStaticFallback(term) {
+	const resultsUrl = term
+		? `https://www.youtube.com/results?search_query=${encodeURIComponent(term)}`
+		: 'https://www.youtube.com/feed/trending';
+
+	const labelEl = document.getElementById('streamLabel');
+	if (labelEl) {
+		labelEl.textContent = term ? `Resultados para "${term}"` : 'Tendencias en YouTube';
+	}
+
+	document.getElementById('streamResults').innerHTML = `
+		<div class="yt-error">
+			Vista previa no disponible en GitHub Pages sin backend.<br/>
+			<a class="shop-link" style="margin-top:10px;display:inline-block" href="${resultsUrl}" target="_blank" rel="noopener noreferrer">Abrir YouTube</a>
+		</div>
+	`;
+}
+
 async function cargarStreaming(term, tagEl) {
 	term = (term || '').trim();
 	const isInicio = !term;
 	ytUpdateDirectLink(term);
+
+	if (isGithubPagesHost()) {
+		ytRenderStaticFallback(term);
+		if (tagEl) ytSetActiveTag(tagEl);
+		return;
+	}
+
 	ytShowSkeleton();
 	if (tagEl) ytSetActiveTag(tagEl);
 
