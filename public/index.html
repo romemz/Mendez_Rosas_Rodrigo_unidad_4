@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html class="dark" lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+  <title>Dashboard Mashup de API</title>
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&amp;family=Manrope:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+  <link href="styles.css" rel="stylesheet"/>
+</head>
+<body class="bg-background text-on-surface font-body min-h-screen">
+  <main class="max-w-7xl mx-auto px-4 py-6 md:py-8 space-y-4">
+    <section class="surface-container-high rounded-xl p-5 border border-outline-variant/30">
+      <p class="text-primary text-xs uppercase tracking-widest font-semibold">Unidad 3</p>
+      <h1 class="font-headline text-3xl font-bold mt-1">Dashboard Mashup de API</h1>
+      <p class="opacity-70 text-sm mt-2">Compendio unificado de 6 categorias consumiendo API reales y simuladas.</p>
+    </section>
+
+    <div class="grid grid-cols-1 md:grid-cols-12 gap-4">
+      <section class="md:col-span-8 surface-container rounded-xl p-5 border-l-4 border-secondary">
+        <h2 class="font-headline text-lg font-bold">1) Geolocalizacion</h2>
+        <div class="mt-3 flex gap-2">
+          <input id="geoQuery" class="w-full bg-surface-container-lowest border border-outline-variant/40 rounded-lg px-3 py-2 text-sm" placeholder="Ej: Ciudad de Mexico" type="text" value="Monterrey"/>
+          <button id="geoBtn" class="bg-secondary text-on-secondary px-4 rounded-lg text-sm font-semibold">Buscar</button>
+          <button id="geoCurrentBtn" class="bg-primary text-on-primary px-4 rounded-lg text-sm font-semibold">Ver mi ubicacion actual</button>
+        </div>
+        <p id="geoCoords" class="text-xs mt-2 opacity-80">Sin consulta.</p>
+        <div id="geoMap" class="w-full h-64 rounded-lg mt-3 border border-outline-variant/40" title="Mapa interactivo de geolocalizacion" role="img" aria-label="Mapa interactivo de geolocalizacion"></div>
+      </section>
+
+      <section class="md:col-span-4 surface-container rounded-xl p-5 border-l-4 border-tertiary">
+        <h2 class="font-headline text-lg font-bold">5) Protocolos</h2>
+        <input id="smsTo" class="w-full mt-3 bg-surface-container-lowest border border-outline-variant/40 rounded-lg px-3 py-2 text-sm" placeholder="Telefono destino" type="text"/>
+        <textarea id="smsMessage" class="w-full mt-2 bg-surface-container-lowest border border-outline-variant/40 rounded-lg px-3 py-2 text-sm h-28" placeholder="Mensaje SMS..."></textarea>
+        <button id="smsBtn" class="w-full mt-2 bg-tertiary text-on-tertiary px-4 py-2 rounded-lg text-sm font-semibold">Simular envio</button>
+        <p id="smsResult" class="text-xs mt-2 opacity-80">Sin envios.</p>
+      </section>
+
+      <section class="md:col-span-12 surface-container rounded-xl p-5 border-l-4 border-secondary">
+        <div class="flex flex-wrap gap-2 items-center justify-between">
+          <h2 class="font-headline text-lg font-bold">2) Redes Sociales</h2>
+          <div class="flex gap-2">
+            <input id="socialProfileUrl" class="bg-surface-container-lowest border border-outline-variant/40 rounded-lg px-3 py-2 text-sm w-[22rem] max-w-full" placeholder="https://x.com/elonmusk" type="url"/>
+            <button id="socialBtn" class="bg-secondary text-on-secondary px-4 rounded-lg text-sm font-semibold">Consultar perfil</button>
+          </div>
+        </div>
+        <div id="socialProfile" class="mt-3 text-sm opacity-90"></div>
+        <div id="socialPosts" class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2"></div>
+      </section>
+
+      <section class="md:col-span-12 ml-section">
+
+        <!-- Header -->
+        <div class="ml-header">
+          <div class="ml-logo-badge">3</div>
+          <div class="ml-logo-text">
+            <span class="ml-logo-title">E-commerce</span>
+            <span class="ml-logo-sub">Mercado Libre API — productos reales</span>
+          </div>
+          <div class="ml-search-wrap">
+            <input id="shopQuery" class="ml-search-input" type="text" placeholder="Buscar en Mercado Libre…"/>
+            <button id="shopBtn" class="ml-search-btn" title="Buscar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="6"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Category chips -->
+        <div class="ml-chips" id="mlChips">
+          <div class="ml-chip active" data-q="laptop">💻 Laptop</div>
+          <div class="ml-chip" data-q="iphone">📱 iPhone</div>
+          <div class="ml-chip" data-q="PS5">🎮 PS5</div>
+          <div class="ml-chip" data-q="tenis">👟 Tenis</div>
+          <div class="ml-chip" data-q="audifonos">🎧 Audio</div>
+          <div class="ml-chip" data-q="mochila">🎒 Mochila</div>
+        </div>
+
+        <!-- Detail card (top result from API) -->
+        <div class="ml-detail" id="mlDetail" style="display:none;">
+          <div class="ml-det-inner">
+            <div class="ml-det-img"><img id="mlDImg" src="" alt=""/></div>
+            <div class="ml-det-info">
+              <span class="ml-det-source">mercado·libre</span>
+              <p class="ml-det-title" id="mlDTitle"></p>
+              <div class="ml-det-badges" id="mlDBadges"></div>
+              <p class="ml-det-price"><span class="ml-det-curr" id="mlDCurr"></span><span id="mlDPrice"></span></p>
+              <a class="ml-det-btn" id="mlDLink" href="#" target="_blank" rel="noopener noreferrer">Ver en Mercado Libre →</a>
+            </div>
+          </div>
+          <div class="ml-det-footer">Primer resultado de la API · Vista de resultados abajo</div>
+        </div>
+
+        <!-- Iframe results -->
+        <div class="ml-frame-wrap">
+          <div class="ml-placeholder" id="mlPlaceholder">
+            <span class="ml-ph-icon">🛒</span>
+            <p class="ml-ph-title">Busca algo para comenzar</p>
+            <p class="ml-ph-sub">Escribe en el buscador o selecciona una categoría.</p>
+          </div>
+          <iframe id="shopFrame" class="ml-frame" style="display:none;"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-top-navigation-by-user-activation">
+          </iframe>
+        </div>
+
+      </section>
+
+      <section class="md:col-span-5 surface-container rounded-xl p-5 border-l-4 border-secondary">
+        <h2 class="font-headline text-lg font-bold">4) Bases de Datos (Nube)</h2>
+        <form id="dbForm" class="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+          <input id="dbUsername" class="bg-surface-container-lowest border border-outline-variant/40 rounded-lg px-3 py-2 text-sm" placeholder="Nombre de usuario" type="text"/>
+          <input id="dbProvider" class="bg-surface-container-lowest border border-outline-variant/40 rounded-lg px-3 py-2 text-sm" placeholder="Proveedor (AWS/GCP/etc)" type="text" value="AWS_OMEGA"/>
+          <button class="bg-secondary text-on-secondary px-4 py-2 rounded-lg text-sm font-semibold" type="submit">Registrar</button>
+        </form>
+        <p id="dbResult" class="text-xs mt-2 opacity-80">Sin registros.</p>
+        <div id="dbList" class="mt-2 space-y-2"></div>
+      </section>
+
+      <section class="md:col-span-12 yt-section">
+
+        <div class="yt-topbar">
+          <div class="yt-logo-badge">
+            <svg height="16" viewBox="0 0 110 24" xmlns="http://www.w3.org/2000/svg">
+              <path d="M33.44 3.75C33.07 2.28 31.92 1.13 30.45.76 27.76 0 17.08 0 17.08 0S6.4 0 3.71.76C2.24 1.13 1.09 2.28.72 3.75 0 6.44 0 12.05 0 12.05s0 5.61.72 8.3c.37 1.47 1.52 2.62 2.99 2.99C6.4 24.1 17.08 24.1 17.08 24.1s10.68 0 13.37-.76c1.47-.37 2.62-1.52 2.99-2.99.72-2.69.72-8.3.72-8.3s0-5.61-.72-8.3z" fill="#FF0000"/>
+              <polygon points="13.63,17.22 22.54,12.05 13.63,6.88" fill="#fff"/>
+              <path d="M41.5 15.6l-3.86-13.9h2.8l1.7 6.5c.45 1.64.77 3.02.97 4.19h.09c.16-.85.48-2.23.97-4.19l1.78-6.5h2.8L44.3 15.6v6.78H41.5V15.6zm8.04 6.12c-.68-.49-1.15-1.25-1.43-2.28-.28-1.02-.43-2.36-.43-4.02v-1.98c0-1.67.16-3.04.49-4.09.33-1.06.84-1.83 1.56-2.3.72-.48 1.67-.72 2.86-.72 1.17 0 2.1.24 2.8.73.69.49 1.19 1.26 1.49 2.31.3 1.05.45 2.4.45 4.07v1.98c0 1.66-.15 3-.44 4.03-.3 1.03-.79 1.79-1.48 2.28-.69.49-1.63.74-2.82.74-1.24 0-2.17-.25-2.85-.75zm4.08-1.96c.21-.48.31-1.25.31-2.31v-6.02c0-1.02-.1-1.78-.31-2.28-.21-.5-.55-.74-1.02-.74-.46 0-.79.25-1 .74-.21.5-.32 1.26-.32 2.28v6.02c0 1.06.11 1.83.31 2.31.21.48.55.72 1.02.72.47 0 .8-.24 1.01-.72z" fill="#fff"/>
+            </svg>
+          </div>
+          <div class="yt-search-wrap">
+            <input id="streamTerm" class="yt-input" placeholder="Buscar en YouTube..." type="text"/>
+            <button id="streamBtn" class="yt-search-icon-btn" title="Buscar">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </button>
+          </div>
+          <a id="streamOpenBtn" class="yt-ext-btn" href="https://www.youtube.com" target="_blank" rel="noopener noreferrer">↗ YouTube</a>
+        </div>
+
+        <div class="yt-tags">
+          <span class="yt-tag active" data-q="">Tendencias</span>
+          <span class="yt-tag" data-q="Musica">Musica</span>
+          <span class="yt-tag" data-q="Gaming">Gaming</span>
+          <span class="yt-tag" data-q="Noticias Mexico">Noticias</span>
+          <span class="yt-tag" data-q="Peliculas trailers">Cine</span>
+          <span class="yt-tag" data-q="Deportes">Deportes</span>
+          <span class="yt-tag" data-q="Tech 2025">Tech</span>
+        </div>
+
+        <div class="yt-panel">
+          <div class="yt-panel-header">
+            <span class="yt-panel-title">Videos</span>
+            <a id="streamDirectLink" class="yt-ext-btn" href="https://www.youtube.com" target="_blank" rel="noopener noreferrer">Abrir en YouTube</a>
+          </div>
+          <p id="streamLabel" class="yt-results-label">Tendencias en México</p>
+          <div id="streamResults" class="yt-grid"></div>
+        </div>
+
+      </section>
+    </div>
+  </main>
+
+  <script src="main.js?v=12"></script>
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyB8SOcrXgZBO_gVS_6hyMEMn-V421JLWS0&callback=initMap&libraries=&v=weekly" async defer></script>
+</body>
+</html>

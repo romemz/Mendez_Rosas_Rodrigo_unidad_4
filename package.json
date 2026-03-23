@@ -1,0 +1,13 @@
+{
+  "name": "apis-mashup-dashboard",
+  "version": "1.0.0",
+  "description": "Dashboard mashup con 6 categorias de API",
+  "main": "routes/app.js",
+  "scripts": {
+    "start": "node routes/app.js",
+    "dev": "node routes/app.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
