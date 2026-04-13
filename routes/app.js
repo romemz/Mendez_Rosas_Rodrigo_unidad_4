@@ -6,7 +6,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '..')));
+app.use(express.static(path.join(__dirname, '..', 'public')));
 
 async function fetchJson(url, options = {}) {
 	const response = await fetch(url, options);
@@ -385,6 +385,349 @@ async function obtenerPostsFacebookBrightData(profileUrl, limit) {
 
 	return response.json();
 }
+
+const resilienciaCache = new Map();
+
+function guardarEnCache(key, data) {
+	resilienciaCache.set(key, {
+		updatedAt: Date.now(),
+		data,
+	});
+}
+
+function leerDeCache(key, maxAgeMs = 15 * 60 * 1000) {
+	const record = resilienciaCache.get(key);
+	if (!record) return null;
+	if (Date.now() - record.updatedAt > maxAgeMs) return null;
+	return record.data;
+}
+
+async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 7000) {
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+	try {
+		const response = await fetch(url, {
+			...options,
+			signal: controller.signal,
+		});
+
+		if (!response.ok) {
+			const error = new Error(`Error en servicio externo: ${response.status}`);
+			error.status = response.status;
+			throw error;
+		}
+
+		return response.json();
+	} catch (error) {
+		if (error.name === 'AbortError') {
+			const timeoutError = new Error(`Tiempo de espera agotado (${timeoutMs}ms)`);
+			timeoutError.status = 504;
+			throw timeoutError;
+		}
+		throw error;
+	} finally {
+		clearTimeout(timeoutId);
+	}
+}
+
+function evaluarRiesgoClimatico(weather = {}) {
+	const temperatura = Number(weather.temperaturaC || 0);
+	const viento = Number(weather.vientoKmh || 0);
+	const lluvia = Number(weather.probLluviaPct || 0);
+
+	if (lluvia >= 70 || viento >= 60) {
+		return {
+			nivel: 'alto',
+			mensaje: 'Condiciones severas detectadas (lluvia/viento).',
+		};
+	}
+
+	if (temperatura >= 38) {
+		return {
+			nivel: 'medio',
+			mensaje: 'Calor extremo detectado.',
+		};
+	}
+
+	return {
+		nivel: 'normal',
+		mensaje: 'Sin alertas climaticas relevantes.',
+	};
+}
+
+function resumirNoticia(text = '', maxLen = 140) {
+	const clean = String(text || '').replace(/\s+/g, ' ').trim();
+	if (!clean) return '';
+	return clean.length > maxLen ? `${clean.slice(0, maxLen - 3)}...` : clean;
+}
+
+async function obtenerClimaPorCiudad(city = 'Monterrey') {
+	const citySafe = String(city || 'Monterrey').trim();
+
+	const geocoding = await fetchJsonWithTimeout(
+		`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(citySafe)}&count=1&language=es&format=json`
+	);
+
+	const lugar = geocoding.results?.[0];
+	if (!lugar) {
+		const error = new Error(`No se encontro la ciudad: ${citySafe}`);
+		error.status = 404;
+		throw error;
+	}
+
+	const forecast = await fetchJsonWithTimeout(
+		`https://api.open-meteo.com/v1/forecast?latitude=${lugar.latitude}&longitude=${lugar.longitude}&current_weather=true&hourly=precipitation_probability&forecast_days=1&timezone=auto`
+	);
+
+	const lluviaMax = Math.max(...(forecast.hourly?.precipitation_probability || [0]));
+	const current = forecast.current_weather || {};
+
+	const data = {
+		ciudad: `${lugar.name}${lugar.country ? `, ${lugar.country}` : ''}`,
+		lat: lugar.latitude,
+		lon: lugar.longitude,
+		temperaturaC: current.temperature,
+		vientoKmh: current.windspeed,
+		climaCodigo: current.weathercode,
+		fechaHora: current.time,
+		probLluviaPct: Number.isFinite(lluviaMax) ? lluviaMax : 0,
+	};
+
+	return {
+		...data,
+		alerta: evaluarRiesgoClimatico(data),
+	};
+}
+
+function normalizarNoticiasReddit(payload = {}, limit = 6) {
+	const children = payload?.data?.children || [];
+	return children.slice(0, limit).map((entry, index) => {
+		const item = entry?.data || {};
+		return {
+			id: item.id || `reddit-${index + 1}`,
+			titulo: item.title || 'Sin titulo',
+			resumen: resumirNoticia(item.selftext || item.title),
+			fuente: 'Reddit',
+			url: item.permalink ? `https://www.reddit.com${item.permalink}` : item.url || '',
+			fecha: item.created_utc ? new Date(item.created_utc * 1000).toISOString() : null,
+		};
+	});
+}
+
+function normalizarNoticiasHn(payload = {}, limit = 6) {
+	const hits = payload?.hits || [];
+	return hits.slice(0, limit).map((item, index) => ({
+		id: item.objectID || `hn-${index + 1}`,
+		titulo: item.title || item.story_title || 'Sin titulo',
+		resumen: resumirNoticia(item.story_text || item.comment_text || item.title),
+		fuente: 'Hacker News',
+		url: item.url || item.story_url || '',
+		fecha: item.created_at || null,
+	}));
+}
+
+async function obtenerNoticiasPorCiudad({ city = 'Monterrey', topic = 'general', limit = 6 }) {
+	const safeLimit = Math.min(12, Math.max(1, Number(limit || 6)));
+	const q = topic === 'general' ? city : `${city} ${topic}`;
+
+	const [redditResult, hnResult] = await Promise.allSettled([
+		fetchJsonWithTimeout(
+			`https://www.reddit.com/search.json?q=${encodeURIComponent(q)}&sort=top&t=day&limit=${safeLimit}`,
+			{
+				headers: {
+					'User-Agent': 'apis-mashup-dashboard/1.0',
+					Accept: 'application/json',
+				},
+			},
+			7000
+		),
+		fetchJsonWithTimeout(
+			`https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(q)}&tags=story&hitsPerPage=${safeLimit}`,
+			{},
+			7000
+		),
+	]);
+
+	const noticias = [];
+	const fuentes = [];
+	const errores = [];
+
+	if (redditResult.status === 'fulfilled') {
+		noticias.push(...normalizarNoticiasReddit(redditResult.value, safeLimit));
+		fuentes.push('reddit');
+	} else {
+		errores.push(`reddit: ${redditResult.reason.message}`);
+	}
+
+	if (hnResult.status === 'fulfilled') {
+		noticias.push(...normalizarNoticiasHn(hnResult.value, safeLimit));
+		fuentes.push('hn');
+	} else {
+		errores.push(`hn: ${hnResult.reason.message}`);
+	}
+
+	const unicas = [];
+	const seen = new Set();
+	for (const noticia of noticias) {
+		const key = `${noticia.titulo}-${noticia.url}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		unicas.push(noticia);
+		if (unicas.length >= safeLimit) break;
+	}
+
+	if (!unicas.length) {
+		const error = new Error('No se pudieron obtener noticias de las fuentes disponibles.');
+		error.status = 502;
+		error.details = errores;
+		throw error;
+	}
+
+	return {
+		query: q,
+		fuentes,
+		noticias: unicas,
+		errores,
+	};
+}
+
+async function ejecutarConFallbackCache({ cacheKey, maxAgeMs = 20 * 60 * 1000, task }) {
+	try {
+		const data = await task();
+		guardarEnCache(cacheKey, data);
+		return {
+			ok: true,
+			data,
+			fallback: false,
+			error: null,
+		};
+	} catch (error) {
+		const cached = leerDeCache(cacheKey, maxAgeMs);
+		if (cached) {
+			return {
+				ok: true,
+				data: cached,
+				fallback: true,
+				error: error.message,
+			};
+		}
+
+		return {
+			ok: false,
+			data: null,
+			fallback: false,
+			error: error.message,
+		};
+	}
+}
+
+app.get('/api/noticiero/weather', async (req, res) => {
+	const city = String(req.query.city || 'Monterrey').trim();
+	const result = await ejecutarConFallbackCache({
+		cacheKey: `noticiero-weather:${city.toLowerCase()}`,
+		task: () => obtenerClimaPorCiudad(city),
+	});
+
+	if (!result.ok) {
+		return res.status(502).json({
+			error: 'No se pudo obtener clima en este momento.',
+			detalle: result.error,
+		});
+	}
+
+	return res.json({
+		service: 'weather',
+		city,
+		fallback: result.fallback,
+		data: result.data,
+	});
+});
+
+app.get('/api/noticiero/news', async (req, res) => {
+	const city = String(req.query.city || 'Monterrey').trim();
+	const topic = String(req.query.topic || 'general').trim();
+	const limit = Math.min(12, Math.max(1, Number(req.query.limit || 6)));
+
+	const result = await ejecutarConFallbackCache({
+		cacheKey: `noticiero-news:${city.toLowerCase()}:${topic.toLowerCase()}:${limit}`,
+		task: () => obtenerNoticiasPorCiudad({ city, topic, limit }),
+	});
+
+	if (!result.ok) {
+		return res.status(502).json({
+			error: 'No se pudieron obtener noticias en este momento.',
+			detalle: result.error,
+		});
+	}
+
+	return res.json({
+		service: 'news',
+		city,
+		topic,
+		fallback: result.fallback,
+		data: result.data,
+	});
+});
+
+app.get('/api/noticiero/home', async (req, res) => {
+	const city = String(req.query.city || 'Monterrey').trim();
+	const topic = String(req.query.topic || 'general').trim();
+	const limit = Math.min(12, Math.max(1, Number(req.query.limit || 6)));
+
+	const [weatherResult, newsResult] = await Promise.allSettled([
+		ejecutarConFallbackCache({
+			cacheKey: `noticiero-weather:${city.toLowerCase()}`,
+			task: () => obtenerClimaPorCiudad(city),
+		}),
+		ejecutarConFallbackCache({
+			cacheKey: `noticiero-news:${city.toLowerCase()}:${topic.toLowerCase()}:${limit}`,
+			task: () => obtenerNoticiasPorCiudad({ city, topic, limit }),
+		}),
+	]);
+
+	const weather = weatherResult.status === 'fulfilled' ? weatherResult.value : {
+		ok: false,
+		data: null,
+		fallback: false,
+		error: weatherResult.reason?.message || 'Error inesperado.',
+	};
+
+	const news = newsResult.status === 'fulfilled' ? newsResult.value : {
+		ok: false,
+		data: null,
+		fallback: false,
+		error: newsResult.reason?.message || 'Error inesperado.',
+	};
+
+	const disponibilidad = {
+		weather: weather.ok,
+		news: news.ok,
+	};
+
+	const degradado = !disponibilidad.weather || !disponibilidad.news;
+	const statusCode = disponibilidad.weather || disponibilidad.news ? 200 : 503;
+
+	return res.status(statusCode).json({
+		city,
+		topic,
+		degradado,
+		disponibilidad,
+		weather: {
+			ok: weather.ok,
+			fallback: weather.fallback,
+			error: weather.error,
+			data: weather.data,
+		},
+		news: {
+			ok: news.ok,
+			fallback: news.fallback,
+			error: news.error,
+			data: news.data,
+		},
+		generadoEn: new Date().toISOString(),
+	});
+});
 
 app.get('/api/health', (_req, res) => {
 	res.json({ ok: true, service: 'mashup-apis' });
@@ -844,6 +1187,80 @@ app.get('/api/youtube-inicio', async (_req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+
+// ── Proxy para Mercado Libre (evita CORS desde el browser) ──────────────────
+app.get('/api/ml-search', async (req, res) => {
+	res.setHeader('Access-Control-Allow-Origin', '*');
+	const q     = String(req.query.q || '').trim();
+	const limit = Math.min(Number(req.query.limit || 8), 20);
+	if (!q) return res.status(400).json({ error: 'Falta parametro q.' });
+	try {
+		try {
+			const data = await fetchJson(
+				`https://api.mercadolibre.com/sites/MLM/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+				{
+					headers: {
+						'User-Agent':
+							'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36',
+						Accept: 'application/json',
+						'Accept-Language': 'es-MX,es;q=0.9,en;q=0.8',
+					},
+				}
+			);
+			return res.json(data);
+		} catch (_apiError) {
+			const response = await fetch(
+				`https://listado.mercadolibre.com.mx/${encodeURIComponent(q)}`,
+				{
+					headers: {
+						'User-Agent':
+							'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36',
+						Accept: 'text/html',
+					},
+				}
+			);
+
+			if (!response.ok) {
+				return res.status(502).json({ error: `ML no disponible (${response.status}).` });
+			}
+
+			const html = await response.text();
+			const productoFallback = extraerProductoDesdeHtmlMercadoLibre(html);
+
+			if (!productoFallback) {
+				return res.status(404).json({ error: 'No se encontraron productos para esa busqueda.' });
+			}
+
+			return res.json({
+				site_id: 'MLM',
+				query: q,
+				results: [
+					{
+						id: productoFallback.id,
+						title: productoFallback.titulo,
+						price: productoFallback.precio,
+						currency_id: productoFallback.moneda,
+						thumbnail: productoFallback.imagen,
+						permalink: productoFallback.url,
+						condition: 'new',
+						shipping: { free_shipping: false },
+					},
+				],
+				paging: {
+					total: 1,
+					limit,
+					offset: 0,
+				},
+				meta: {
+					fallback: 'html',
+				},
+			});
+		}
+	} catch (error) {
+		return res.status(502).json({ error: `ML no disponible: ${error.message}` });
+	}
+});
 
 app.listen(PORT, () => {
 	console.log(`Servidor listo en http://localhost:${PORT}`);

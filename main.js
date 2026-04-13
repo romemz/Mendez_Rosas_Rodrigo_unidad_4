@@ -44,45 +44,12 @@ function formatError(error) {
 	return error?.message || 'Ocurrio un error inesperado.';
 }
 
-function isGithubPagesHost() {
-	return typeof window !== 'undefined' && window.location.hostname.endsWith('github.io');
-}
-
 async function fetchApi(url, options = {}) {
 	const response = await fetch(url, options);
-	const contentType = (response.headers.get('content-type') || '').toLowerCase();
-	const raw = await response.text();
-	let data = null;
-
-	if (raw) {
-		const pareceJson = contentType.includes('application/json') || /^[\s\r\n]*[\[{]/.test(raw);
-		if (pareceJson) {
-			try {
-				data = JSON.parse(raw);
-			} catch (_error) {
-				data = null;
-			}
-		}
-	}
-
-	const isApiRoute = typeof url === 'string' && url.startsWith('/api/');
+	const data = await response.json();
 	if (!response.ok) {
-		if (data?.error) {
-			throw new Error(data.error);
-		}
-		if (isApiRoute) {
-			throw new Error('Esta seccion requiere backend Node/Express activo; en GitHub Pages las rutas /api no existen.');
-		}
-		throw new Error(`Error en la peticion (${response.status}).`);
+		throw new Error(data.error || 'Error en la peticion.');
 	}
-
-	if (!data) {
-		if (isApiRoute) {
-			throw new Error('No se recibio JSON de la API. Verifica que el backend este encendido.');
-		}
-		throw new Error('La respuesta del servidor no es JSON valido.');
-	}
-
 	return data;
 }
 
@@ -225,12 +192,125 @@ function verMiUbicacionActual() {
 	);
 }
 
+// ─── X / Twitter helpers ────────────────────────────────────────────────────
+
+function renderTweetCard(post, username) {
+	const fecha = (post.body || '').match(/Publicado:\s*(.+)$/)?.[1] || post.pubDate || '';
+	const texto = (post.body || '').replace(/\n+Publicado:.+$/, '').trim() || post.title || '';
+	return `
+		<div class="x-tweet-card">
+			<div class="x-tweet-header">
+				<img class="x-tweet-avatar"
+					src="https://unavatar.io/twitter/${username}"
+					onerror="this.src='https://abs.twimg.com/sticky/default_profile_images/default_profile_400x400.png'"
+					alt="@${username}"/>
+				<div>
+					<span class="x-tweet-name">@${username}</span>
+					${fecha ? `<span class="x-tweet-date">${fecha}</span>` : ''}
+				</div>
+				<a class="x-tweet-logo" href="${post.url || '#'}" target="_blank" rel="noopener noreferrer">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.746l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+				</a>
+			</div>
+			<p class="x-tweet-body">${texto}</p>
+			${post.image ? `<img class="x-tweet-image" src="${post.image}" alt="" loading="lazy"/>` : ''}
+			<div class="x-tweet-footer">
+				${post.url ? `<a class="x-tweet-link" href="${post.url}" target="_blank" rel="noopener noreferrer">Ver en X →</a>` : ''}
+			</div>
+		</div>`;
+}
+
+async function cargarTweetsOEmbed(username, postsEl) {
+	postsEl.innerHTML = `<div class="x-tweets-loading">${Array(4).fill('<div class="x-tweet-skel"></div>').join('')}</div>`;
+
+	try {
+		const data = await fetchApi(`/api/redes-sociales?profileUrl=${encodeURIComponent('https://x.com/' + username)}&limit=6`);
+		const posts = data.publicaciones || [];
+
+		if (!posts.length) {
+			postsEl.innerHTML = '<p class="x-no-tweets">No se pudieron obtener publicaciones.</p>';
+			return;
+		}
+
+		postsEl.innerHTML = '<div id="x-tweets-list" class="x-tweets-list"></div>';
+		const list = document.getElementById('x-tweets-list');
+
+		// Intentar embeds oficiales de X tweet a tweet
+		await new Promise((resolve) => {
+			if (window.twttr?.widgets) { resolve(); return; }
+			const s = document.createElement('script');
+			s.src = 'https://platform.twitter.com/widgets.js';
+			s.async = true;
+			s.onload = resolve; s.onerror = resolve;
+			document.head.appendChild(s);
+		});
+
+		for (const post of posts) {
+			const tweetId = post.url?.match(/status\/(\d+)/)?.[1];
+			const wrapper = document.createElement('div');
+			wrapper.className = 'x-tweet-wrap';
+
+			if (tweetId && window.twttr?.widgets?.createTweet) {
+				wrapper.innerHTML = '<div class="x-tweet-loading-mini"></div>';
+				list.appendChild(wrapper);
+				try {
+					await window.twttr.widgets.createTweet(tweetId, wrapper, { theme: 'dark', dnt: true, align: 'center' });
+					wrapper.querySelector('.x-tweet-loading-mini')?.remove();
+				} catch (_e) {
+					wrapper.innerHTML = renderTweetCard(post, username);
+				}
+			} else {
+				wrapper.innerHTML = renderTweetCard(post, username);
+				list.appendChild(wrapper);
+			}
+		}
+	} catch (_err) {
+		postsEl.innerHTML = '<p class="x-no-tweets">No se pudieron cargar los tweets.</p>';
+	}
+}
+
+function renderPerfilX(username, profileUrl) {
+	const profileEl = $('#socialProfile');
+	const postsEl   = $('#socialPosts');
+
+	profileEl.innerHTML = `
+		<div class="x-profile-card">
+			<div class="x-profile-banner"></div>
+			<div class="x-profile-body">
+				<div class="x-profile-top">
+					<div class="x-avatar-wrap">
+						<img class="x-avatar"
+							src="https://unavatar.io/twitter/${username}"
+							onerror="this.src='https://abs.twimg.com/sticky/default_profile_images/default_profile_400x400.png'"
+							alt="@${username}"/>
+					</div>
+					<a class="x-follow-btn" href="${profileUrl}" target="_blank" rel="noopener noreferrer">Seguir en X</a>
+				</div>
+				<div class="x-profile-names">
+					<span class="x-display-name">@${username}</span>
+					<span class="x-handle">@${username}</span>
+				</div>
+				<div class="x-meta">
+					<span class="x-meta-item">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="opacity:.5"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.746l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+						X / Twitter
+					</span>
+					<a class="x-meta-item x-meta-link" href="${profileUrl}" target="_blank" rel="noopener noreferrer">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.746l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+						Ver perfil completo
+					</a>
+				</div>
+			</div>
+		</div>`;
+
+	postsEl.className = 'mt-3';
+	cargarTweetsOEmbed(username, postsEl);
+}
+
 async function cargarRedesSociales() {
 	let profileUrl = $('#socialProfileUrl').value.trim();
 	profileUrl = profileUrl.replace(/^https?:\/\/(?:www\.)?https?:\/\//i, 'https://');
-	if (profileUrl && !/^https?:\/\//i.test(profileUrl)) {
-		profileUrl = `https://${profileUrl}`;
-	}
+	if (profileUrl && !/^https?:\/\//i.test(profileUrl)) profileUrl = `https://${profileUrl}`;
 	$('#socialProfileUrl').value = profileUrl;
 
 	if (!profileUrl) {
@@ -239,77 +319,55 @@ async function cargarRedesSociales() {
 		return;
 	}
 
+	// Detectar X/Twitter antes del fetch
+	const isX = /^https?:\/\/(www\.)?(x\.com|twitter\.com)\//i.test(profileUrl);
+	if (isX) {
+		const username = extraerUsuarioX(profileUrl);
+		if (username) { renderPerfilX(username, profileUrl); return; }
+	}
+
 	$('#socialProfile').textContent = 'Consultando perfil...';
 	$('#socialPosts').innerHTML = '';
 
 	try {
 		const data = await fetchApi(`/api/redes-sociales?profileUrl=${encodeURIComponent(profileUrl)}`);
 
-		if (data.fuente === 'facebook-embed' && data.embedUrl) {
+		// Reddit
+		if (data.fuente === 'reddit') {
 			$('#socialProfile').innerHTML = `
-				<div class="bg-surface-container-lowest border border-outline-variant/30 rounded-lg p-3">
-					<p><strong>${data.perfil.nombre}</strong> (@${data.perfil.usuario})</p>
-					<p class="text-xs opacity-75">Fuente: ${data.fuente} | ${data.aviso}</p>
-					<a class="shop-link inline-block mt-2" href="${data.perfil.url}" target="_blank" rel="noopener noreferrer">Abrir perfil</a>
-				</div>
-			`;
-
-			$('#socialPosts').innerHTML = `
-				<div class="md:col-span-2 bg-surface-container-lowest border border-outline-variant/30 rounded-lg p-3">
-					<iframe
-						title="Timeline de Facebook"
-						src="${data.embedUrl}"
-						class="w-full h-[620px] rounded-md border border-outline-variant/40"
-						style="overflow:hidden"
-						scrolling="no"
-						frameborder="0"
-						allowfullscreen="true"
-						allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share">
-					</iframe>
-				</div>
-			`;
-			return;
-		}
-
-		$('#socialProfile').innerHTML = `
-			<div class="bg-surface-container-lowest border border-outline-variant/30 rounded-lg p-3">
-				<p><strong>${data.perfil.nombre}</strong> (@${data.perfil.usuario})</p>
-				<p class="text-xs opacity-75">Fuente: ${data.fuente} | ${data.perfil.empresa || 'Sin empresa'} | Karma: ${data.perfil.karma ?? 'n/a'}</p>
-				${data.perfil.url ? `<a class="shop-link inline-block mt-2" href="${data.perfil.url}" target="_blank" rel="noopener noreferrer">Abrir perfil</a>` : ''}
-			</div>
-		`;
-
-		const xFrame =
-			data.fuente === 'x-rss' && data.perfil?.url
-				? `
-				<div class="md:col-span-2 bg-surface-container-lowest border border-outline-variant/30 rounded-lg p-3">
-					<p class="text-[11px] opacity-70 mb-2">Vista de X</p>
-					<p class="text-sm opacity-85">En este entorno el embed de X se bloquea. Se muestran publicaciones extraidas y enlaces directos.</p>
-					<p class="text-[11px] opacity-75 mt-2">
-						Abrir perfil completo en X:
-						<a class="shop-link ml-1" href="${data.perfil.url}" target="_blank" rel="noopener noreferrer">Perfil en X</a>
-					</p>
-				</div>
-			`
-				: '';
-
-		const postsHtml = data.publicaciones
-			.map(
-				(post) => `
+				<div class="bg-surface-container-lowest border border-outline-variant/30 rounded-lg p-3 flex items-center gap-3">
+					${data.perfil.avatar ? `<img src="${data.perfil.avatar}" class="w-12 h-12 rounded-full object-cover flex-shrink-0" alt="avatar"/>` : ''}
+					<div>
+						<p class="font-semibold">${data.perfil.nombre}</p>
+						<p class="text-xs opacity-70">u/${data.perfil.usuario} · Karma: ${data.perfil.karma ?? 'n/a'}</p>
+						${data.perfil.url ? `<a class="shop-link inline-block mt-1" href="${data.perfil.url}" target="_blank" rel="noopener noreferrer">Ver en Reddit</a>` : ''}
+					</div>
+				</div>`;
+			$('#socialPosts').innerHTML = data.publicaciones.map((post) => `
 				<article class="bg-surface-container-lowest border border-outline-variant/30 rounded-lg p-3">
-					${post.image ? `<img src="${post.image}" alt="Imagen de publicacion" class="social-post-image" loading="lazy" />` : ''}
 					<h3 class="font-semibold text-sm">${post.title}</h3>
-					<p class="text-xs mt-1 opacity-80">${post.body || 'Sin descripcion.'}</p>
+					<p class="text-xs mt-1 opacity-80">${post.body || ''}</p>
 					<div class="mt-2 flex items-center justify-between gap-2">
 						<span class="text-[11px] opacity-60">Score: ${post.score ?? 'n/a'}</span>
 						${post.url ? `<a class="shop-link" href="${post.url}" target="_blank" rel="noopener noreferrer">Ver publicacion</a>` : ''}
 					</div>
-				</article>
-			`
-			)
-			.join('');
+				</article>`).join('');
+			return;
+		}
 
-		$('#socialPosts').innerHTML = `${xFrame}${postsHtml}`;
+		// Fallback genérico
+		$('#socialProfile').innerHTML = `
+			<div class="bg-surface-container-lowest border border-outline-variant/30 rounded-lg p-3">
+				<p><strong>${data.perfil.nombre}</strong> (@${data.perfil.usuario})</p>
+				${data.perfil.url ? `<a class="shop-link inline-block mt-2" href="${data.perfil.url}" target="_blank" rel="noopener noreferrer">Abrir perfil</a>` : ''}
+			</div>`;
+		$('#socialPosts').innerHTML = (data.publicaciones || []).map((post) => `
+			<article class="bg-surface-container-lowest border border-outline-variant/30 rounded-lg p-3">
+				${post.image ? `<img src="${post.image}" alt="" class="social-post-image" loading="lazy"/>` : ''}
+				<h3 class="font-semibold text-sm">${post.title}</h3>
+				<p class="text-xs mt-1 opacity-80">${post.body || ''}</p>
+				${post.url ? `<a class="shop-link mt-2 inline-block" href="${post.url}" target="_blank" rel="noopener noreferrer">Ver publicacion</a>` : ''}
+			</article>`).join('');
 	} catch (error) {
 		$('#socialProfile').textContent = formatError(error);
 	}
@@ -319,9 +377,68 @@ function mlFmt(n) {
 	return new Intl.NumberFormat('es-MX').format(Math.round(Number(n) || 0));
 }
 
+async function mlLoadGrid(q, searchUrl) {
+	const placeholder = document.getElementById('mlPlaceholder');
+	placeholder.style.display = 'block';
+	placeholder.classList.add('ml-results-mode');
+	placeholder.innerHTML = '<p class="ml-ph-sub">Buscando resultados...</p>';
+
+	try {
+		const res = await fetch(`/api/ml-search?q=${encodeURIComponent(q)}&limit=8`);
+		const data = await res.json();
+		const items = data.results || [];
+
+		if (!items.length) {
+			placeholder.innerHTML = `
+				<div class="ml-empty-box">
+					<p class="ml-ph-title">No encontramos productos para "${q}"</p>
+					<a class="ml-open-btn" href="${searchUrl}" target="_blank" rel="noopener noreferrer">Abrir resultados en Mercado Libre</a>
+				</div>
+			`;
+			return;
+		}
+
+		placeholder.innerHTML = `
+			<div class="ml-grid-header">
+				<p class="ml-ph-title">Resultados para "${q}"</p>
+				<a class="ml-open-btn" href="${searchUrl}" target="_blank" rel="noopener noreferrer">Abrir en Mercado Libre</a>
+			</div>
+			<div class="ml-results-grid">
+				${items
+					.map((item) => {
+						const thumb = String(item.thumbnail || '')
+							.replace('http://', 'https://')
+							.replace('-I.jpg', '-O.jpg');
+						const currency = item.currency_id || 'MXN';
+						const price = mlFmt(item.price);
+						return `
+							<article class="ml-item-card">
+								<div class="ml-item-image-wrap">
+									<img class="ml-item-image" src="${thumb}" alt="${item.title || 'Producto'}" loading="lazy" />
+								</div>
+								<p class="ml-item-title">${item.title || 'Producto sin titulo'}</p>
+								<p class="ml-item-price">${currency} ${price}</p>
+								<a class="ml-item-link" href="${item.permalink || searchUrl}" target="_blank" rel="noopener noreferrer">Ver producto</a>
+							</article>
+						`;
+					})
+					.join('')}
+			</div>
+		`;
+	} catch (_error) {
+		placeholder.innerHTML = `
+			<div class="ml-empty-box">
+				<p class="ml-ph-title">No se pudo cargar la vista interna.</p>
+				<p class="ml-ph-sub">Puedes abrir los resultados directamente en Mercado Libre.</p>
+				<a class="ml-open-btn" href="${searchUrl}" target="_blank" rel="noopener noreferrer">Abrir resultados en Mercado Libre</a>
+			</div>
+		`;
+	}
+}
+
 async function mlLoadDetail(q) {
 	try {
-		const res = await fetch(`https://api.mercadolibre.com/sites/MLM/search?q=${encodeURIComponent(q)}&limit=1`);
+		const res = await fetch(`/api/ml-search?q=${encodeURIComponent(q)}&limit=1`);
 		const data = await res.json();
 		const items = data.results || [];
 		if (!items.length) { document.getElementById('mlDetail').style.display = 'none'; return; }
@@ -346,16 +463,13 @@ async function cargarProducto() {
 	const query = $('#shopQuery').value.trim();
 	if (!query) return;
 
-	// Iframe de resultados reales
-	const slug = query.replace(/\s+/g, '-');
-	const searchUrl = `https://listado.mercadolibre.com.mx/${encodeURIComponent(slug)}`;
+	const searchUrl = `https://listado.mercadolibre.com.mx/${encodeURIComponent(query)}`;
 	const frame = document.getElementById('shopFrame');
-	frame.src = searchUrl;
-	frame.style.display = 'block';
-	document.getElementById('mlPlaceholder').style.display = 'none';
+	frame.removeAttribute('src');
+	frame.style.display = 'none';
 
 	// Card del primer resultado
-	mlLoadDetail(query);
+	await Promise.all([mlLoadDetail(query), mlLoadGrid(query, searchUrl)]);
 }
 
 async function refrescarRegistros() {
@@ -421,6 +535,90 @@ async function enviarSms() {
 		$('#smsResult').textContent = `${result.mensaje} | folio: ${result.sms.id}`;
 	} catch (error) {
 		$('#smsResult').textContent = formatError(error);
+	}
+}
+
+function renderRiskBadge(alerta = {}) {
+	const badge = $('#riskBadge');
+	if (!badge) return;
+
+	const nivel = String(alerta.nivel || 'normal').toLowerCase();
+	badge.classList.remove('normal', 'medio', 'alto');
+	badge.classList.add(['normal', 'medio', 'alto'].includes(nivel) ? nivel : 'normal');
+	badge.textContent = alerta.mensaje || 'Sin alertas climaticas.';
+}
+
+function renderWeatherSummary(weatherData) {
+	const target = $('#weatherSummary');
+	if (!target) return;
+
+	if (!weatherData) {
+		target.innerHTML = '<p class="text-sm opacity-70">Sin datos de clima disponibles.</p>';
+		return;
+	}
+
+	const parts = [
+		`<strong>${weatherData.ciudad || 'Ciudad desconocida'}</strong>`,
+		`Temp: <strong>${weatherData.temperaturaC ?? 'n/a'}°C</strong>`,
+		`Viento: <strong>${weatherData.vientoKmh ?? 'n/a'} km/h</strong>`,
+		`Prob. lluvia: <strong>${weatherData.probLluviaPct ?? 'n/a'}%</strong>`,
+	];
+
+	target.innerHTML = `<p>${parts.join(' | ')}</p>`;
+}
+
+function renderNewsList(newsPayload) {
+	const target = $('#newsList');
+	if (!target) return;
+
+	const noticias = newsPayload?.noticias || [];
+	if (!noticias.length) {
+		target.innerHTML = '<p class="text-sm opacity-70">No hay titulares disponibles.</p>';
+		return;
+	}
+
+	target.innerHTML = noticias
+		.map(
+			(item) => `
+			<article class="noti-item">
+				<p class="noti-item-title">${item.titulo || 'Sin titulo'}</p>
+				<p class="noti-item-summary">${item.resumen || ''}</p>
+				<div class="noti-item-meta">
+					<span>${item.fuente || 'Fuente'}</span>
+					${item.url ? `<a href="${item.url}" target="_blank" rel="noopener noreferrer">Ver nota</a>` : ''}
+				</div>
+			</article>
+		`
+		)
+		.join('');
+}
+
+async function cargarNoticieroLocal() {
+	const city = $('#newsCity')?.value.trim() || 'Monterrey';
+	const topic = $('#newsTopic')?.value.trim() || 'general';
+
+	$('#newsStatus').textContent = 'Consultando portada local...';
+
+	try {
+		const data = await fetchApi(
+			`/api/noticiero/home?city=${encodeURIComponent(city)}&topic=${encodeURIComponent(topic)}&limit=6`
+		);
+
+		renderWeatherSummary(data.weather?.data || null);
+		renderRiskBadge(data.weather?.data?.alerta || {});
+		renderNewsList(data.news?.data || null);
+
+		const etiquetas = [];
+		if (data.degradado) etiquetas.push('Modo degradado');
+		if (data.weather?.fallback || data.news?.fallback) etiquetas.push('Datos desde cache');
+
+		const estado = etiquetas.length ? ` (${etiquetas.join(' | ')})` : '';
+		$('#newsStatus').textContent = `Portada actualizada para ${city} / ${topic}${estado}.`;
+	} catch (error) {
+		$('#newsStatus').textContent = `No se pudo actualizar la portada: ${formatError(error)}`;
+		renderWeatherSummary(null);
+		renderRiskBadge({ nivel: 'normal', mensaje: 'sin datos' });
+		renderNewsList(null);
 	}
 }
 
@@ -537,35 +735,10 @@ function ytRenderVideos(videos, label) {
 	});
 }
 
-function ytRenderStaticFallback(term) {
-	const resultsUrl = term
-		? `https://www.youtube.com/results?search_query=${encodeURIComponent(term)}`
-		: 'https://www.youtube.com/feed/trending';
-
-	const labelEl = document.getElementById('streamLabel');
-	if (labelEl) {
-		labelEl.textContent = term ? `Resultados para "${term}"` : 'Tendencias en YouTube';
-	}
-
-	document.getElementById('streamResults').innerHTML = `
-		<div class="yt-error">
-			Vista previa no disponible en GitHub Pages sin backend.<br/>
-			<a class="shop-link" style="margin-top:10px;display:inline-block" href="${resultsUrl}" target="_blank" rel="noopener noreferrer">Abrir YouTube</a>
-		</div>
-	`;
-}
-
 async function cargarStreaming(term, tagEl) {
 	term = (term || '').trim();
 	const isInicio = !term;
 	ytUpdateDirectLink(term);
-
-	if (isGithubPagesHost()) {
-		ytRenderStaticFallback(term);
-		if (tagEl) ytSetActiveTag(tagEl);
-		return;
-	}
-
 	ytShowSkeleton();
 	if (tagEl) ytSetActiveTag(tagEl);
 
@@ -606,6 +779,13 @@ function init() {
 
 	$('#dbForm').addEventListener('submit', registrarUsuario);
 	$('#smsBtn').addEventListener('click', enviarSms);
+	$('#newsBtn').addEventListener('click', cargarNoticieroLocal);
+	$('#newsCity').addEventListener('keydown', (e) => {
+		if (e.key === 'Enter') { e.preventDefault(); cargarNoticieroLocal(); }
+	});
+	$('#newsTopic').addEventListener('keydown', (e) => {
+		if (e.key === 'Enter') { e.preventDefault(); cargarNoticieroLocal(); }
+	});
 
 	$('#streamBtn').addEventListener('click', () => cargarStreaming($('#streamTerm').value));
 	$('#streamTerm').addEventListener('keydown', (e) => {
@@ -622,6 +802,7 @@ function init() {
 	cargarRedesSociales();
 	refrescarRegistros();
 	cargarStreaming('');
+	cargarNoticieroLocal();
 
 	// Carga inicial de e-commerce
 	$('#shopQuery').value = 'laptop';
