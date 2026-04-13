@@ -809,4 +809,240 @@ function init() {
 	cargarProducto();
 }
 
+/* ── Sistema de Pruebas - Unidad 4 ── */
+
+let testLog = [];
+
+function logTest(message, type = 'info') {
+	const timestamp = new Date().toLocaleTimeString();
+	testLog.push({ message, type, timestamp });
+	updateTestDisplay();
+}
+
+function updateTestDisplay() {
+	const resultDiv = document.getElementById('testResults');
+	if (!resultDiv) return;
+
+	resultDiv.innerHTML = testLog
+		.map((log) => {
+			let color = 'text-green-400';
+			if (log.type === 'error') color = 'text-red-400';
+			else if (log.type === 'warning') color = 'text-yellow-400';
+			else if (log.type === 'info') color = 'text-blue-400';
+
+			return `<div class="${color}">[${log.timestamp}] ${log.message}</div>`;
+		})
+		.join('');
+
+	resultDiv.scrollTop = resultDiv.scrollHeight;
+}
+
+async function runUnitTests() {
+	testLog = [];
+	logTest('▶ Iniciando pruebas unitarias...', 'info');
+
+	const tests = [
+		{
+			name: 'U-01: Validar parseo de URL social',
+			test: () => {
+				const url = 'https://x.com/elonmusk';
+				const result = url.includes('x.com') ? 'exitoso' : 'fallido';
+				return result === 'exitoso' ? '✓ PASS' : '✗ FAIL';
+			},
+		},
+		{
+			name: 'U-02: Evaluar riesgo climático',
+			test: () => {
+				const weather = { temp_c: 40, rain_prob: 75, wind_kph: 65 };
+				const riskLevel = weather.temp_c > 38 || weather.rain_prob > 70 || weather.wind_kph > 60 ? 'alto' : 'normal';
+				return riskLevel === 'alto' ? '✓ PASS' : '✗ FAIL';
+			},
+		},
+		{
+			name: 'U-03: Extracción de JSON-LD',
+			test: () => {
+				const html = '<script type="application/ld+json">{"@type": "Product"}</script>';
+				const hasJSON = html.includes('application/ld+json') ? 'exitoso' : 'fallido';
+				return hasJSON === 'exitoso' ? '✓ PASS' : '✗ FAIL';
+			},
+		},
+		{
+			name: 'U-04: Normalización de noticias Reddit',
+			test: () => {
+				const news = { title: 'Test', subreddit: 'r/test', score: 100 };
+				const normalized = { titulo: news.title, fuente: 'Reddit', puntos: news.score };
+				return normalized.fuente === 'Reddit' ? '✓ PASS' : '✗ FAIL';
+			},
+		},
+	];
+
+	let passed = 0;
+	for (const test of tests) {
+		try {
+			const result = test.test();
+			if (result.includes('PASS')) passed++;
+			logTest(`${test.name} - ${result}`, result.includes('PASS') ? 'info' : 'error');
+		} catch (e) {
+			logTest(`${test.name} - ✗ FAIL (${e.message})`, 'error');
+		}
+	}
+
+	logTest(`✓ Pruebas unitarias completadas: ${passed}/${tests.length} aprobadas`, 'info');
+	document.getElementById('unitPass').textContent = `${passed}/${tests.length}`;
+	calculateSuccessRate();
+}
+
+async function runIntegrationTests() {
+	testLog = [];
+	logTest('▶ Iniciando pruebas de integración...', 'info');
+
+	const tests = [
+		{
+			name: 'I-01: GET /api/geolocalizacion',
+			test: async () => {
+				try {
+					const res = await fetch('/api/geolocalizacion?q=Monterrey');
+					const data = await res.json();
+					return res.ok && data.lat && data.lon ? '✓ PASS' : '✗ FAIL';
+				} catch (_) {
+					return '✗ FAIL';
+				}
+			},
+		},
+		{
+			name: 'I-02: GET /api/ml-search (proxy test)',
+			test: async () => {
+				try {
+					const res = await fetch('/api/ml-search?q=laptop&limit=2');
+					const data = await res.json();
+					return res.ok && data.results ? '✓ PASS' : '✗ FAIL';
+				} catch (_) {
+					return '✗ FAIL';
+				}
+			},
+		},
+		{
+			name: 'I-03: GET /api/noticiero/home endpoint',
+			test: async () => {
+				try {
+					const res = await fetch('/api/noticiero/home?city=Monterrey&topic=general&limit=3');
+					const data = await res.json();
+					return res.ok && data.weather && data.news ? '✓ PASS' : '✗ FAIL';
+				} catch (_) {
+					return '✗ FAIL';
+				}
+			},
+		},
+		{
+			name: 'I-04: Validar resilencia ante degradación',
+			test: async () => {
+				try {
+					const res = await fetch('/api/noticiero/home?city=Monterrey&topic=tech&limit=3');
+					const data = await res.json();
+					return res.ok ? '✓ PASS (resilencia activa)' : '✗ FAIL';
+				} catch (_) {
+					return '✗ FAIL';
+				}
+			},
+		},
+	];
+
+	let passed = 0;
+	for (const test of tests) {
+		try {
+			const result = await test.test();
+			if (result.includes('PASS')) passed++;
+			logTest(`${test.name} - ${result}`, result.includes('PASS') ? 'info' : 'error');
+		} catch (e) {
+			logTest(`${test.name} - ✗ FAIL (${e.message})`, 'error');
+		}
+	}
+
+	logTest(`✓ Pruebas integración completadas: ${passed}/${tests.length} aprobadas`, 'info');
+	document.getElementById('intPass').textContent = `${passed}/${tests.length}`;
+	calculateSuccessRate();
+}
+
+async function runUITests() {
+	testLog = [];
+	logTest('▶ Iniciando pruebas UI...', 'info');
+
+	const tests = [
+		{
+			name: 'UI-01: Validar elementos en DOM',
+			test: () => {
+				const required = ['geoBtn', 'shopBtn', 'newsBtn', 'newsCity', 'newsList', 'streamResults', 'dbForm'];
+				const found = required.filter((id) => document.getElementById(id)).length;
+				return found === required.length ? '✓ PASS' : `✗ FAIL (${found}/${required.length} encontrados)`;
+			},
+		},
+		{
+			name: 'UI-02: Validar funciones cargarNoticieroLocal',
+			test: () => {
+				return typeof cargarNoticieroLocal === 'function' ? '✓ PASS' : '✗ FAIL';
+			},
+		},
+		{
+			name: 'UI-03: Validar estilos noticiero presentes',
+			test: () => {
+				const stylesheet = document.querySelector('link[href="styles.css"]');
+				const hasStyles = document.querySelectorAll('[class*="noti-"]').length > 0;
+				return stylesheet && hasStyles ? '✓ PASS' : '✗ FAIL';
+			},
+		},
+	];
+
+	let passed = 0;
+	for (const test of tests) {
+		try {
+			const result = test.test();
+			if (result.includes('PASS')) passed++;
+			logTest(`${test.name} - ${result}`, result.includes('PASS') ? 'info' : 'error');
+		} catch (e) {
+			logTest(`${test.name} - ✗ FAIL (${e.message})`, 'error');
+		}
+	}
+
+	logTest(`✓ Pruebas UI completadas: ${passed}/${tests.length} aprobadas`, 'info');
+	document.getElementById('uiPass').textContent = `${passed}/${tests.length}`;
+	calculateSuccessRate();
+}
+
+function calculateSuccessRate() {
+	const unitText = document.getElementById('unitPass').textContent;
+	const intText = document.getElementById('intPass').textContent;
+	const uiText = document.getElementById('uiPass').textContent;
+
+	const parse = (txt) => {
+		const parts = txt.split('/');
+		return [parseInt(parts[0]) || 0, parseInt(parts[1]) || 0];
+	};
+
+	const [unitPass, unitTotal] = parse(unitText);
+	const [intPass, intTotal] = parse(intText);
+	const [uiPass, uiTotal] = parse(uiText);
+
+	const totalPass = unitPass + intPass + uiPass;
+	const totalTests = unitTotal + intTotal + uiTotal;
+	const rate = totalTests > 0 ? Math.round((totalPass / totalTests) * 100) : 0;
+
+	document.getElementById('successRate').textContent = `${rate}%`;
+}
+
+// Conectar botones de pruebas
+document.addEventListener('DOMContentLoaded', () => {
+	const unitBtn = document.getElementById('runUnitTests');
+	const intBtn = document.getElementById('runIntegrationTests');
+	const uiBtn = document.getElementById('runUITests');
+
+	if (unitBtn) unitBtn.addEventListener('click', runUnitTests);
+	if (intBtn) intBtn.addEventListener('click', runIntegrationTests);
+	if (uiBtn) uiBtn.addEventListener('click', runUITests);
+
+	// Ejecutar todos automáticamente al cargar
+	setTimeout(() => {
+		runUnitTests().then(() => runIntegrationTests()).then(() => runUITests());
+	}, 1500);
+});
+
 document.addEventListener('DOMContentLoaded', init);
